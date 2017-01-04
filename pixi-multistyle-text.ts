@@ -24,8 +24,22 @@ interface TextData {
 	fontProperties: FontProperties;
 }
 
+function wrapForWrite<T>(obj: T, fn: () => void): T {
+	return new Proxy(obj, {
+		get(target: T, property: PropertyKey) {
+			return wrapForWrite((target as any)[property], fn);
+		},
+
+		set(target: T, property: PropertyKey, value: any) {
+			fn();
+			(target as any)[property] = value;
+			return true;
+		}
+	});
+}
+
 export default class MultiStyleText extends PIXI.Text {
-	private textStyles: TextStyleSet;
+	private _styles: TextStyleSet;
 
 	constructor(text: string, styles: TextStyleSet) {
 		super(text);
@@ -34,9 +48,9 @@ export default class MultiStyleText extends PIXI.Text {
 	}
 
 	public set styles(styles: TextStyleSet) {
-		this.textStyles = {};
+		this._styles = {};
 
-		this.textStyles["default"] = {
+		this._styles["default"] = {
 			align: "left",
 			breakWords: false,
 			dropShadow: false,
@@ -65,22 +79,26 @@ export default class MultiStyleText extends PIXI.Text {
 
 		for (let style in styles) {
 			if (style === "default") {
-				this.assign(this.textStyles["default"], styles[style]);
+				Object.assign(this._styles["default"], styles[style]);
 			} else {
-				this.textStyles[style] = this.assign({}, styles[style]);
+				this._styles[style] = Object.assign({}, styles[style]);
 			}
 		}
 
-		this._style = new PIXI.TextStyle(this.textStyles["default"]);
+		this._style = new PIXI.TextStyle(this._styles["default"]);
 		this.dirty = true;
+	}
+
+	public get styles(): TextStyleSet {
+		return wrapForWrite(this._styles, () => { this.dirty = true; });
 	}
 
 	private _getTextDataPerLine (lines: string[]) {
 		let outputTextData: TextData[][] = [];
-		let tags = Object.keys(this.textStyles).join("|");
+		let tags = Object.keys(this._styles).join("|");
 		let re = new RegExp(`<\/?(${tags})>`, "g");
 
-		let styleStack = [this.assign({}, this.textStyles["default"])];
+		let styleStack = [Object.assign({}, this._styles["default"])];
 
 		// determine the group of word for each line
 		for (let i = 0; i < lines.length; i++) {
@@ -116,7 +134,7 @@ export default class MultiStyleText extends PIXI.Text {
 							styleStack.pop();
 						}
 					} else { // set the current style
-						styleStack.push(this.assign({}, styleStack[styleStack.length - 1], this.textStyles[matches[j][1]]));
+						styleStack.push(Object.assign({}, styleStack[styleStack.length - 1], this._styles[matches[j][1]]));
 					}
 
 					// update the current search index
@@ -154,7 +172,7 @@ export default class MultiStyleText extends PIXI.Text {
 		}
 
 		this.texture.baseTexture.resolution = this.resolution;
-		let textStyles = this.textStyles;
+		let textStyles = this._styles;
 		let outputText = this.text;
 
 		// TODO(bluepichu): Reword word wrapping as breakWord is broken
@@ -320,13 +338,13 @@ export default class MultiStyleText extends PIXI.Text {
 	protected wordWrap(text: string): string {
 		// Greedy wrapping algorithm that will wrap words as the line grows longer than its horizontal bounds.
 		let result = '';
-		let tags = Object.keys(this.textStyles).join("|");
+		let tags = Object.keys(this._styles).join("|");
 		let re = new RegExp(`(<\/?(${tags})>)`, "g");
 
 		const lines = text.split("\n");
 		const wordWrapWidth = this._style.wordWrapWidth;
-		let styleStack = [this.assign({}, this.textStyles["default"])];
-		this.context.font = PIXI.Text.getFontStyle(this.textStyles["default"]);
+		let styleStack = [Object.assign({}, this._styles["default"])];
+		this.context.font = PIXI.Text.getFontStyle(this._styles["default"]);
 
 		for (let i = 0; i < lines.length; i++) {
 			let spaceLeft = wordWrapWidth;
@@ -343,7 +361,7 @@ export default class MultiStyleText extends PIXI.Text {
 							styleStack.pop();
 						} else {
 							k++;
-							styleStack.push(this.assign({}, styleStack[styleStack.length - 1], this.textStyles[parts[k]]));
+							styleStack.push(Object.assign({}, styleStack[styleStack.length - 1], this._styles[parts[k]]));
 						}
 						this.context.font = PIXI.Text.getFontStyle(styleStack[styleStack.length - 1]);
 						continue;
@@ -406,16 +424,5 @@ export default class MultiStyleText extends PIXI.Text {
 		}
 
 		return result;
-	}
-
-	// Lazy fill for Object.assign
-	private assign(destination: any, ...sources: any[]): any {
-		for (let source of sources) {
-			for (let key in source) {
-				destination[key] = source[key];
-			}
-		}
-
-		return destination;
 	}
 }
